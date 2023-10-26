@@ -1,0 +1,9 @@
+./filtermanager.go
+./passthrough.go
+./type.go
+_cgo_gotypes.go
+capi_impl.cgo1.go
+config.cgo1.go
+filter.cgo1.go
+shim.cgo1.go
+_cgo_import.go

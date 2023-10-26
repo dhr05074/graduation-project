@@ -1,0 +1,14 @@
+version: "3.7"
+services:
+  go_plugin_compile:
+    image: "golang:1.18"
+    volumes:
+      - ./:/source
+      - ./cache:/root/.cache/go-build
+    working_dir: /source
+    command: >
+      bash -c "
+      go build -o traffic.so -buildmode=c-shared ."
+    environment:
+      - GOFLAGS=-buildvcs=false
+  
