@@ -9,3 +9,16 @@ services:
       - ./traffic.so:/lib/traffic.so
     environment:
       - GODEBUG=cgocheck=0
+    networks:
+      - default
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile_server
+    ports:
+      - "8080:8080"
+    networks:
+      - default
+networks:
+  default:
+    driver: bridge

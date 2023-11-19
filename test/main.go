@@ -3,95 +3,86 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 )
 
-const (
-	numWorkers        = 500
-	requestsPerWorker = 100
-	requestsPerSecond = 20
-)
-
-func main() {
-	reportFile, err := os.Create("report.csv")
-	if err != nil {
-		panic(err)
-	}
-	defer reportFile.Close()
-
-	// Define the endpoints to test.
-	endpoints := []string{
-		"http://localhost:10000/high",
-		"http://localhost:10000/mid",
-		"http://localhost:10000/low",
-	}
-
-	// Create a wait group to synchronize goroutines.
-	var wg sync.WaitGroup
-
-	// Create a map to store the success rates for each endpoint.
-	var successRates []int
-
-	for i := 0; i < len(endpoints); i++ {
-		successRates = append(successRates, 0)
-	}
-
-	go func() {
-		for range time.Tick(1 * time.Second) {
-			fmt.Printf("successRates: %+v\n", successRates)
-
-			line := "\n"
-
-			for i := 0; i < len(successRates); i++ {
-				line += fmt.Sprintf("%d,", successRates[i])
-			}
-
-			reportFile.WriteString(line)
+func makeRequest(url string, priorityValue int, resultChan chan<- int) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered in f", r)
 		}
 	}()
 
-	// Create a function to make requests to an endpoint.
-	makeRequests := func(endpoint string, idx int) {
-		defer wg.Done()
+	// Create an HTTP client
+	client := &http.Client{}
 
-		for i := 0; i < requestsPerWorker; i++ {
-			// Create an HTTP client.
-			client := &http.Client{}
-
-			// Send an HTTP GET request to the endpoint.
-			resp, err := client.Get(endpoint)
-			if err != nil {
-				//fmt.Printf("Error making request to %s: %v\n", endpoint, err)
-				continue
-			}
-
-			if resp.StatusCode == http.StatusOK {
-				successRates[idx] += 1
-			}
-
-			// Close the response body.
-			resp.Body.Close()
-
-			time.Sleep(1 * time.Second / requestsPerSecond)
-		}
+	// Create an HTTP request
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		fmt.Println("Error creating request:", err)
+		return
 	}
 
-	// Launch goroutines to make requests to each endpoint.
-	for k, endpoint := range endpoints {
-		for i := 0; i < numWorkers; i++ {
+	// Set the 'X-Priority' header with the given value
+	req.Header.Set("X-Priority", fmt.Sprintf("%d", priorityValue))
+
+	// Make the HTTP request
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Println("Error making request:", err)
+		return
+	}
+
+	// Ensure the response body is closed
+	defer resp.Body.Close()
+
+	// Check if the response code is 200 (success)
+	if resp.StatusCode == http.StatusOK {
+		resultChan <- priorityValue
+	}
+}
+
+func main() {
+	url := "http://localhost:10000"
+	numRequests := 1000
+	numWorkers := 5
+	resultChan := make(chan int, numRequests*numWorkers)
+
+	var wg sync.WaitGroup
+
+	// Run workers to make requests in parallel
+	for k := 0; k < 5; k++ {
+		for i := 1; i <= numWorkers; i++ {
 			wg.Add(1)
-			go makeRequests(endpoint, k)
+			go func(workerID int) {
+				defer wg.Done()
+				for j := 1; j <= numRequests; j++ {
+					makeRequest(url, workerID, resultChan)
+					time.Sleep(10 * time.Millisecond)
+				}
+			}(i)
 		}
 	}
 
-	// Wait for all goroutines to finish.
-	wg.Wait()
+	// Wait for fixed amount of time to count responses
+	time.Sleep(5 * time.Second)
 
-	// Print the success rates for each endpoint.
-	fmt.Println("Success rates for each endpoint:")
-	for i, endpoint := range endpoints {
-		fmt.Printf("%s: %d\n", endpoint, successRates[i])
+	// Close the result channel to signal that we're done
+	close(resultChan)
+
+	// Collect and count success rates for each X-Priority value
+	successCounts := make(map[int]int)
+	for success := range resultChan {
+		successCounts[success]++
+	}
+
+	// Print success count for each X-Priority value
+	for i := 1; i <= 5; i++ {
+		successCount, exists := successCounts[i]
+		if !exists {
+			successCount = 0
+		}
+		fmt.Printf("X-Priority: %d, Successes: %d\n", i, successCount)
 	}
 }

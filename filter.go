@@ -1,11 +1,9 @@
 package main
 
 import (
-	"github.com/alitto/pond"
 	"github.com/envoyproxy/envoy/contrib/golang/common/go/api"
-	"golang.org/x/time/rate"
-	"sync"
-	"time"
+	"strconv"
+	"traffic-shaping/manager"
 )
 
 type filter struct {
@@ -13,42 +11,29 @@ type filter struct {
 
 	callbacks api.FilterCallbackHandler
 	config    *config
-	pm        map[int]*pond.WorkerPool
-	cntMap    map[int]int
-	mu        *sync.Mutex
-	lim       *rate.Limiter
+
+	bucketManager *manager.BucketManager
 
 	reqChan map[int]chan struct{}
 }
 
 func (f *filter) DecodeHeaders(header api.RequestHeaderMap, endStream bool) api.StatusType {
-	pt, _ := header.Get(":path")
-
-	p, ok := f.config.Paths[pt]
+	priorityHeader, ok := header.Get("X-Priority")
 	if !ok {
-		p = 50
+		priorityHeader = "5"
 	}
 
-	go func() {
-		defer f.callbacks.RecoverPanic()
+	// priority value must be between 1 and 5
+	priorityValue, err := strconv.Atoi(priorityHeader)
+	if err != nil || priorityValue < 1 || priorityValue > 5 {
+		f.callbacks.SendLocalReply(500, "Invalid priority value. It must be between 1 and 5.", nil, 0, "")
+	}
 
-		time.Sleep(1 * time.Millisecond)
+	if err := f.bucketManager.Consume(uint(priorityValue)); err != nil {
+		f.callbacks.SendLocalReply(429, "Too Many Requests. Try again later.", nil, 0, "")
+	}
 
-		f.mu.Lock()
-		if _, ok := f.reqChan[p]; !ok {
-			f.reqChan[p] = make(chan struct{}, 1<<10>>uint(p))
-		}
-		f.mu.Unlock()
-
-		select {
-		case f.reqChan[p] <- struct{}{}:
-			f.callbacks.Continue(api.Continue)
-		default:
-			f.callbacks.SendLocalReply(429, "Too Many Requests", nil, 0, "")
-		}
-	}()
-
-	return api.Running
+	return api.Continue
 }
 
 func main() {
